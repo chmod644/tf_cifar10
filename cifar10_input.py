@@ -84,12 +84,14 @@ def read_cifar10(filename_queue):
 
   # The first bytes represent the label, which we convert from uint8->int32.
   result.label = tf.cast(
-      tf.slice(record_bytes, [0], [label_bytes]), tf.int32)
+      tf.strided_slice(record_bytes, [0], [label_bytes]), tf.int32)
 
   # The remaining bytes after the label represent the image, which we reshape
   # from [depth * height * width] to [depth, height, width].
-  depth_major = tf.reshape(tf.slice(record_bytes, [label_bytes], [image_bytes]),
-                           [result.depth, result.height, result.width])
+  depth_major = tf.reshape(
+      tf.strided_slice(record_bytes, [label_bytes],
+                       [label_bytes + image_bytes]),
+      [result.depth, result.height, result.width])
   # Convert from [depth, height, width] to [height, width, depth].
   result.uint8image = tf.transpose(depth_major, [1, 2, 0])
 
@@ -130,7 +132,7 @@ def _generate_image_and_label_batch(image, label, min_queue_examples,
         capacity=min_queue_examples + 3 * batch_size)
 
   # Display the training images in the visualizer.
-  tf.image_summary('images', images)
+  tf.summary.image('images', images)
 
   return images, tf.reshape(label_batch, [batch_size])
 
@@ -173,13 +175,19 @@ def distorted_inputs(data_dir, batch_size):
 
   # Because these operations are not commutative, consider randomizing
   # the order their operation.
+  # NOTE: since per_image_standardization zeros the mean and makes
+  # the stddev unit, this likely has no effect see tensorflow#1458.
   distorted_image = tf.image.random_brightness(distorted_image,
                                                max_delta=63)
   distorted_image = tf.image.random_contrast(distorted_image,
                                              lower=0.2, upper=1.8)
 
   # Subtract off the mean and divide by the variance of the pixels.
-  float_image = tf.image.per_image_whitening(distorted_image)
+  float_image = tf.image.per_image_standardization(distorted_image)
+
+  # Set the shapes of tensors.
+  float_image.set_shape([height, width, 3])
+  read_input.label.set_shape([1])
 
   # Ensure that the random shuffling has good mixing properties.
   min_fraction_of_examples_in_queue = 0.4
@@ -231,10 +239,14 @@ def inputs(eval_data, data_dir, batch_size):
   # Image processing for evaluation.
   # Crop the central [height, width] of the image.
   resized_image = tf.image.resize_image_with_crop_or_pad(reshaped_image,
-                                                         width, height)
+                                                         height, width)
 
   # Subtract off the mean and divide by the variance of the pixels.
-  float_image = tf.image.per_image_whitening(resized_image)
+  float_image = tf.image.per_image_standardization(resized_image)
+
+  # Set the shapes of tensors.
+  float_image.set_shape([height, width, 3])
+  read_input.label.set_shape([1])
 
   # Ensure that the random shuffling has good mixing properties.
   min_fraction_of_examples_in_queue = 0.4
