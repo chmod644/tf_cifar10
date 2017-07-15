@@ -68,7 +68,10 @@ def eval_once(saver, summary_writer, top_k_op, summary_op):
     top_k_op: Top K op.
     summary_op: Summary op.
   """
-  with tf.Session() as sess:
+  config = tf.ConfigProto()
+  config.gpu_options.allow_growth = True
+
+  with tf.Session(config=config) as sess:
     ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
     if ckpt and ckpt.model_checkpoint_path:
       # Restores from checkpoint
