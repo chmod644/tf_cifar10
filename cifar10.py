@@ -54,6 +54,8 @@ tf.app.flags.DEFINE_string('data_dir', '/tmp/cifar10_data',
                            """Path to the CIFAR-10 data directory.""")
 tf.app.flags.DEFINE_boolean('use_fp16', False,
                             """Train the model using fp16.""")
+tf.app.flags.DEFINE_float('bn_momentum', 0.99,
+                            """Momentum for the moving average of batch normalization.""")
 
 # Global constants describing the CIFAR-10 data set.
 IMAGE_SIZE = cifar10_input.IMAGE_SIZE
@@ -206,7 +208,7 @@ def inference(images, training=True):
                                          stddev=5e-2,
                                          wd=0.0)
     conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
-    bn = tf.layers.batch_normalization(conv, training=training)
+    bn = tf.layers.batch_normalization(conv, momentum=FLAGS.bn_momentum, training=training)
     conv1 = tf.nn.relu(bn, name=scope.name)
     _activation_summary(conv1)
 
@@ -221,7 +223,7 @@ def inference(images, training=True):
                                          stddev=5e-2,
                                          wd=0.0)
     conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], padding='SAME')
-    bn = tf.layers.batch_normalization(conv, training=training)
+    bn = tf.layers.batch_normalization(conv, momentum=FLAGS.bn_momentum, training=training)
     conv2 = tf.nn.relu(bn, name=scope.name)
     _activation_summary(conv2)
 
@@ -236,7 +238,7 @@ def inference(images, training=True):
     dim = reshape.get_shape()[1].value
     weights = _variable_with_weight_decay('weights', shape=[dim, 384],
                                           stddev=0.04, wd=0.004)
-    bn = tf.layers.batch_normalization(tf.matmul(reshape, weights), training=training)
+    bn = tf.layers.batch_normalization(tf.matmul(reshape, weights), momentum=FLAGS.bn_momentum, training=training)
     local3 = tf.nn.relu(bn, name=scope.name)
     _activation_summary(local3)
 
@@ -244,7 +246,7 @@ def inference(images, training=True):
   with tf.variable_scope('local4') as scope:
     weights = _variable_with_weight_decay('weights', shape=[384, 192],
                                           stddev=0.04, wd=0.004)
-    bn = tf.layers.batch_normalization(tf.matmul(local3, weights), training=training)
+    bn = tf.layers.batch_normalization(tf.matmul(local3, weights), momentum=FLAGS.bn_momentum, training=training)
     local4 = tf.nn.relu(bn, name=scope.name)
     _activation_summary(local4)
 
