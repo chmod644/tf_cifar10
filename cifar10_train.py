@@ -114,6 +114,7 @@ def train():
         hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
                tf.train.NanTensorHook(loss),
                _LoggerHook()],
+        save_checkpoint_secs=60,
         config=config) as mon_sess:
       while not mon_sess.should_stop():
         mon_sess.run(train_op)
