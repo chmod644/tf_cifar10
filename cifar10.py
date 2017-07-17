@@ -56,6 +56,8 @@ tf.app.flags.DEFINE_boolean('use_fp16', False,
                             """Train the model using fp16.""")
 tf.app.flags.DEFINE_float('bn_momentum', 0.99,
                             """Momentum for the moving average of batch normalization.""")
+tf.app.flags.DEFINE_float('wd', 0.004,
+        """L2Loss weight decay multiplied by this float.""")
 
 # Global constants describing the CIFAR-10 data set.
 IMAGE_SIZE = cifar10_input.IMAGE_SIZE
@@ -206,7 +208,7 @@ def inference(images, training=True):
     kernel = _variable_with_weight_decay('weights',
                                          shape=[5, 5, 3, 64],
                                          stddev=5e-2,
-                                         wd=0.0)
+                                         wd=FLAGS.wd)
     conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
     bn = tf.layers.batch_normalization(conv, momentum=FLAGS.bn_momentum, training=training)
     conv1 = tf.nn.relu(bn, name=scope.name)
@@ -221,7 +223,7 @@ def inference(images, training=True):
     kernel = _variable_with_weight_decay('weights',
                                          shape=[5, 5, 64, 64],
                                          stddev=5e-2,
-                                         wd=0.0)
+                                         wd=FLAGS.wd)
     conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], padding='SAME')
     bn = tf.layers.batch_normalization(conv, momentum=FLAGS.bn_momentum, training=training)
     conv2 = tf.nn.relu(bn, name=scope.name)
@@ -237,7 +239,7 @@ def inference(images, training=True):
     reshape = tf.reshape(pool2, [FLAGS.batch_size, -1])
     dim = reshape.get_shape()[1].value
     weights = _variable_with_weight_decay('weights', shape=[dim, 384],
-                                          stddev=0.04, wd=0.004)
+                                          stddev=0.04, wd=FLAGS.wd)
     bn = tf.layers.batch_normalization(tf.matmul(reshape, weights), momentum=FLAGS.bn_momentum, training=training)
     local3 = tf.nn.relu(bn, name=scope.name)
     _activation_summary(local3)
@@ -245,7 +247,7 @@ def inference(images, training=True):
   # local4
   with tf.variable_scope('local4') as scope:
     weights = _variable_with_weight_decay('weights', shape=[384, 192],
-                                          stddev=0.04, wd=0.004)
+                                          stddev=0.04, wd=FLAGS.wd)
     bn = tf.layers.batch_normalization(tf.matmul(local3, weights), momentum=FLAGS.bn_momentum, training=training)
     local4 = tf.nn.relu(bn, name=scope.name)
     _activation_summary(local4)
@@ -256,7 +258,7 @@ def inference(images, training=True):
   # and performs the softmax internally for efficiency.
   with tf.variable_scope('softmax_linear') as scope:
     weights = _variable_with_weight_decay('weights', [192, NUM_CLASSES],
-                                          stddev=1/192.0, wd=0.0)
+                                          stddev=1/192.0, wd=FLAGS.wd)
     biases = _variable_on_cpu('biases', [NUM_CLASSES],
                               tf.constant_initializer(0.0))
     softmax_linear = tf.add(tf.matmul(local4, weights), biases, name=scope.name)
