@@ -190,6 +190,24 @@ def inputs(eval_data):
     return images, labels
 
 
+def conv_bn(features, kernel_sizes, strides, out_channels, training, scope):
+
+    in_channel = features.get_shape()[-1]
+    for i, (kernel_size, stride, out_channel) in enumerate(zip(kernel_sizes, strides, out_channels)):
+        kernel = _variable_with_weight_decay("weights{}".format(i),
+                                             shape=[kernel_size, kernel_size, in_channel, out_channel],
+                                             stddev=5e-2,
+                                             wd=FLAGS.wd)
+        features = tf.nn.conv2d(features, kernel, [1, stride, stride, 1], padding='SAME')
+        in_channel = out_channel
+    bn = tf.layers.batch_normalization(
+        features, momentum=FLAGS.bn_momentum, training=training)
+    conv = tf.nn.relu(bn, name=scope.name)
+    _activation_summary(conv)
+
+    return conv
+
+
 def inference(images, training=True):
     """Build the CIFAR-10 model.
 
@@ -206,15 +224,7 @@ def inference(images, training=True):
     #
     # conv1
     with tf.variable_scope('conv1') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[5, 5, 3, 64],
-                                             stddev=5e-2,
-                                             wd=FLAGS.wd)
-        conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
-        bn = tf.layers.batch_normalization(
-            conv, momentum=FLAGS.bn_momentum, training=training)
-        conv1 = tf.nn.relu(bn, name=scope.name)
-        _activation_summary(conv1)
+        conv1 = conv_bn(images, [3, 3], [1, 1], [64, 64], training, scope)
 
     # pool1
     pool1 = tf.nn.max_pool(conv1, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1],
@@ -222,15 +232,7 @@ def inference(images, training=True):
 
     # conv2
     with tf.variable_scope('conv2') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[5, 5, 64, 64],
-                                             stddev=5e-2,
-                                             wd=FLAGS.wd)
-        conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], padding='SAME')
-        bn = tf.layers.batch_normalization(
-            conv, momentum=FLAGS.bn_momentum, training=training)
-        conv2 = tf.nn.relu(bn, name=scope.name)
-        _activation_summary(conv2)
+        conv2 = conv_bn(pool1, [3, 3], [1, 1], [64, 64], training, scope)
 
     # pool2
     pool2 = tf.nn.max_pool(conv2, ksize=[1, 3, 3, 1],
