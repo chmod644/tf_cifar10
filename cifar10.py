@@ -208,6 +208,22 @@ def conv_bn(features, kernel_sizes, strides, out_channels, training, scope):
     return conv
 
 
+def dense_bn(features, out_dims, training, scope):
+    features = tf.reshape(features, [FLAGS.batch_size, -1])
+    in_dim = features.get_shape()[-1].value
+    for i, out_dim in enumerate(out_dims):
+        weights = _variable_with_weight_decay("weights".format(i), shape=[in_dim, out_dim],
+                stddev=0.04, wd=FLAGS.wd)
+        in_dim = out_dim
+        features = tf.matmul(features, weights)
+    bn = tf.layers.batch_normalization(
+        features, momentum=FLAGS.bn_momentum, training=training)
+    dense = tf.nn.relu(bn, name=scope.name)
+    _activation_summary(dense)
+
+    return dense
+
+
 def inference(images, training=True):
     """Build the CIFAR-10 model.
 
@@ -238,39 +254,26 @@ def inference(images, training=True):
     pool2 = tf.nn.max_pool(conv2, ksize=[1, 3, 3, 1],
                            strides=[1, 2, 2, 1], padding='SAME', name='pool2')
 
-    # local3
-    with tf.variable_scope('local3') as scope:
-        # Move everything into depth so we can perform a single matrix
-        # multiply.
-        reshape = tf.reshape(pool2, [FLAGS.batch_size, -1])
-        dim = reshape.get_shape()[1].value
-        weights = _variable_with_weight_decay('weights', shape=[dim, 384],
-                                              stddev=0.04, wd=FLAGS.wd)
-        bn = tf.layers.batch_normalization(
-            tf.matmul(reshape, weights), momentum=FLAGS.bn_momentum, training=training)
-        local3 = tf.nn.relu(bn, name=scope.name)
-        _activation_summary(local3)
+    # conv3
+    with tf.variable_scope('conv3') as scope:
+        conv3 = conv_bn(pool1, [1, 1], [1, 1], [64, 128], training, scope)
 
     # local4
     with tf.variable_scope('local4') as scope:
-        weights = _variable_with_weight_decay('weights', shape=[384, 192],
-                                              stddev=0.04, wd=FLAGS.wd)
-        bn = tf.layers.batch_normalization(
-            tf.matmul(local3, weights), momentum=FLAGS.bn_momentum, training=training)
-        local4 = tf.nn.relu(bn, name=scope.name)
-        _activation_summary(local4)
+        dense = dense_bn(conv3, [192], training, scope)
 
     # linear layer(WX + b),
     # We don't apply softmax here because
     # tf.nn.sparse_softmax_cross_entropy_with_logits accepts the unscaled logits
     # and performs the softmax internally for efficiency.
     with tf.variable_scope('softmax_linear') as scope:
-        weights = _variable_with_weight_decay('weights', [192, NUM_CLASSES],
-                                              stddev=1 / 192.0, wd=FLAGS.wd)
+        dim = dense.get_shape()[1].value
+        weights = _variable_with_weight_decay('weights', [dim, NUM_CLASSES],
+                                              stddev=float(1) / dim, wd=FLAGS.wd)
         biases = _variable_on_cpu('biases', [NUM_CLASSES],
                                   tf.constant_initializer(0.0))
         softmax_linear = tf.add(
-            tf.matmul(local4, weights), biases, name=scope.name)
+            tf.matmul(dense, weights), biases, name=scope.name)
         _activation_summary(softmax_linear)
 
     return softmax_linear
