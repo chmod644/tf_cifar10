@@ -212,7 +212,7 @@ def dense_bn(features, out_dims, training, scope):
     features = tf.reshape(features, [FLAGS.batch_size, -1])
     in_dim = features.get_shape()[-1].value
     for i, out_dim in enumerate(out_dims):
-        weights = _variable_with_weight_decay("weights".format(i), shape=[in_dim, out_dim],
+        weights = _variable_with_weight_decay("weights{}".format(i), shape=[in_dim, out_dim],
                 stddev=0.04, wd=FLAGS.wd)
         in_dim = out_dim
         features = tf.matmul(features, weights)
@@ -260,7 +260,7 @@ def inference(images, training=True):
 
     # local4
     with tf.variable_scope('local4') as scope:
-        dense = dense_bn(conv3, [192], training, scope)
+        dense = dense_bn(conv3, [384, 192], training, scope)
 
     # linear layer(WX + b),
     # We don't apply softmax here because
