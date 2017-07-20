@@ -192,14 +192,17 @@ def inputs(eval_data):
 
 def conv_bn(features, kernel_sizes, strides, out_channels, training, scope):
 
+    dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
+    initializer = tf.truncated_normal_initializer(stddev=5e-2, dtype=dtype)
+    regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
+
     in_channel = features.get_shape()[-1]
-    for i, (kernel_size, stride, out_channel) in enumerate(zip(kernel_sizes, strides, out_channels)):
-        kernel = _variable_with_weight_decay("weights{}".format(i),
-                                             shape=[kernel_size, kernel_size, in_channel, out_channel],
-                                             stddev=5e-2,
-                                             wd=FLAGS.wd)
-        features = tf.nn.conv2d(features, kernel, [1, stride, stride, 1], padding='SAME')
+    for kernel_size, stride, out_channel in zip(kernel_sizes, strides, out_channels):
+        features = tf.layers.conv2d(
+                features, filters=out_channel, kernel_size=kernel_size, strides=stride, padding='SAME',
+                use_bias=False, kernel_initializer=initializer, kernel_regularizer=regularizer)
         in_channel = out_channel
+
     bn = tf.layers.batch_normalization(
         features, momentum=FLAGS.bn_momentum, training=training)
     conv = tf.nn.relu(bn, name=scope.name)
@@ -210,12 +213,17 @@ def conv_bn(features, kernel_sizes, strides, out_channels, training, scope):
 
 def dense_bn(features, out_dims, training, scope):
     features = tf.reshape(features, [FLAGS.batch_size, -1])
+
+    dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
+    initializer = tf.truncated_normal_initializer(stddev=5e-2, dtype=dtype)
+    regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
+
     in_dim = features.get_shape()[-1].value
-    for i, out_dim in enumerate(out_dims):
-        weights = _variable_with_weight_decay("weights{}".format(i), shape=[in_dim, out_dim],
-                stddev=0.04, wd=FLAGS.wd)
+    for out_dim in out_dims:
+        features = tf.layers.dense(
+                features, units=out_dim, kernel_initializer=initializer, kernel_regularizer=regularizer)
         in_dim = out_dim
-        features = tf.matmul(features, weights)
+
     bn = tf.layers.batch_normalization(
         features, momentum=FLAGS.bn_momentum, training=training)
     dense = tf.nn.relu(bn, name=scope.name)
