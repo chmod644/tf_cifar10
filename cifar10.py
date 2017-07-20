@@ -256,7 +256,7 @@ def inference(images, training=True):
 
     # conv3
     with tf.variable_scope('conv3') as scope:
-        conv3 = conv_bn(pool1, [1, 1], [1, 1], [64, 128], training, scope)
+        conv3 = conv_bn(pool2, [1, 1], [1, 1], [64, 128], training, scope)
 
     # local4
     with tf.variable_scope('local4') as scope:
