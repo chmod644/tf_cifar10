@@ -268,7 +268,7 @@ def inference(images, training=True):
 
     # local4
     with tf.variable_scope('local4') as scope:
-        dense = dense_bn(conv3, [384, 192], training, scope)
+        dense = dense_bn(conv3, [192], training, scope)
 
     # linear layer(WX + b),
     # We don't apply softmax here because
