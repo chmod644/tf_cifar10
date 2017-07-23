@@ -99,49 +99,9 @@ def _activation_summary(x):
                       tf.nn.zero_fraction(x))
 
 
-def _variable_on_cpu(name, shape, initializer):
-    """Helper to create a Variable stored on CPU memory.
-
-    Args:
-      name: name of the variable
-      shape: list of ints
-      initializer: initializer for Variable
-
-    Returns:
-      Variable Tensor
-    """
-    with tf.device('/cpu:0'):
-        dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
-        var = tf.get_variable(
-            name, shape, initializer=initializer, dtype=dtype)
-    return var
-
-
-def _variable_with_weight_decay(name, shape, stddev, wd):
-    """Helper to create an initialized Variable with weight decay.
-
-    Note that the Variable is initialized with a truncated normal distribution.
-    A weight decay is added only if one is specified.
-
-    Args:
-      name: name of the variable
-      shape: list of ints
-      stddev: standard deviation of a truncated Gaussian
-      wd: add L2Loss weight decay multiplied by this float. If None, weight
-          decay is not added for this Variable.
-
-    Returns:
-      Variable Tensor
-    """
+def _get_dtype():
     dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
-    var = _variable_on_cpu(
-        name,
-        shape,
-        tf.truncated_normal_initializer(stddev=stddev, dtype=dtype))
-    if wd is not None:
-        weight_decay = tf.multiply(tf.nn.l2_loss(var), wd, name='weight_loss')
-        tf.add_to_collection('losses', weight_decay)
-    return var
+    return dtype
 
 
 def distorted_inputs():
@@ -192,14 +152,17 @@ def inputs(eval_data):
 
 def conv_bn(features, kernel_sizes, strides, out_channels, training, scope):
 
+    dtype = _get_dtype()
+    initializer = tf.truncated_normal_initializer(stddev=5e-2, dtype=dtype)
+    regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
+
     in_channel = features.get_shape()[-1]
-    for i, (kernel_size, stride, out_channel) in enumerate(zip(kernel_sizes, strides, out_channels)):
-        kernel = _variable_with_weight_decay("weights{}".format(i),
-                                             shape=[kernel_size, kernel_size, in_channel, out_channel],
-                                             stddev=5e-2,
-                                             wd=FLAGS.wd)
-        features = tf.nn.conv2d(features, kernel, [1, stride, stride, 1], padding='SAME')
+    for kernel_size, stride, out_channel in zip(kernel_sizes, strides, out_channels):
+        features = tf.layers.conv2d(
+                features, filters=out_channel, kernel_size=kernel_size, strides=stride, padding='SAME',
+                use_bias=False, kernel_initializer=initializer, kernel_regularizer=regularizer)
         in_channel = out_channel
+
     bn = tf.layers.batch_normalization(
         features, momentum=FLAGS.bn_momentum, training=training)
     conv = tf.nn.relu(bn, name=scope.name)
@@ -210,12 +173,17 @@ def conv_bn(features, kernel_sizes, strides, out_channels, training, scope):
 
 def dense_bn(features, out_dims, training, scope):
     features = tf.reshape(features, [FLAGS.batch_size, -1])
+
+    dtype = _get_dtype()
+    initializer = tf.truncated_normal_initializer(stddev=5e-2, dtype=dtype)
+    regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
+
     in_dim = features.get_shape()[-1].value
-    for i, out_dim in enumerate(out_dims):
-        weights = _variable_with_weight_decay("weights{}".format(i), shape=[in_dim, out_dim],
-                stddev=0.04, wd=FLAGS.wd)
+    for out_dim in out_dims:
+        features = tf.layers.dense(
+                features, units=out_dim, use_bias=False, kernel_initializer=initializer, kernel_regularizer=regularizer)
         in_dim = out_dim
-        features = tf.matmul(features, weights)
+
     bn = tf.layers.batch_normalization(
         features, momentum=FLAGS.bn_momentum, training=training)
     dense = tf.nn.relu(bn, name=scope.name)
@@ -267,13 +235,17 @@ def inference(images, training=True):
     # tf.nn.sparse_softmax_cross_entropy_with_logits accepts the unscaled logits
     # and performs the softmax internally for efficiency.
     with tf.variable_scope('softmax_linear') as scope:
+        dtype = _get_dtype()
         dim = dense.get_shape()[1].value
-        weights = _variable_with_weight_decay('weights', [dim, NUM_CLASSES],
-                                              stddev=float(1) / dim, wd=FLAGS.wd)
-        biases = _variable_on_cpu('biases', [NUM_CLASSES],
-                                  tf.constant_initializer(0.0))
-        softmax_linear = tf.add(
-            tf.matmul(dense, weights), biases, name=scope.name)
+        kernel_initializer = tf.truncated_normal_initializer(stddev=float(1)/dim, dtype=dtype)
+        bias_initializer = tf.zeros_initializer(dtype=dtype)
+        regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
+        softmax_linear = tf.layers.dense(
+                dense, units=NUM_CLASSES, use_bias=True,
+                kernel_initializer=kernel_initializer,
+                bias_initializer=bias_initializer,
+                kernel_regularizer=regularizer,
+                bias_regularizer=regularizer)
         _activation_summary(softmax_linear)
 
     return softmax_linear
@@ -296,7 +268,10 @@ def loss(logits, labels):
     cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=labels, logits=logits, name='cross_entropy_per_example')
     cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
-    tf.add_to_collection('losses', cross_entropy_mean)
+
+    tf.get_collection_ref('losses').extend(
+            tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+    tf.get_collection_ref('losses').append(cross_entropy_mean)
 
     # The total loss is defined as the cross entropy loss plus all of the weight
     # decay terms (L2 loss).
