@@ -133,7 +133,7 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
     Returns:
       Variable Tensor
     """
-    dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
+    dtype = get_dtype()
     var = _variable_on_cpu(
         name,
         shape,
@@ -144,7 +144,7 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
     return var
 
 
-def get_dtype():
+def _get_dtype():
     dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
     return dtype
 
@@ -197,7 +197,7 @@ def inputs(eval_data):
 
 def conv_bn(features, kernel_sizes, strides, out_channels, training, scope):
 
-    dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
+    dtype = _get_dtype()
     initializer = tf.truncated_normal_initializer(stddev=5e-2, dtype=dtype)
     regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
 
@@ -219,14 +219,14 @@ def conv_bn(features, kernel_sizes, strides, out_channels, training, scope):
 def dense_bn(features, out_dims, training, scope):
     features = tf.reshape(features, [FLAGS.batch_size, -1])
 
-    dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
+    dtype = _get_dtype()
     initializer = tf.truncated_normal_initializer(stddev=5e-2, dtype=dtype)
     regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
 
     in_dim = features.get_shape()[-1].value
     for out_dim in out_dims:
         features = tf.layers.dense(
-                features, units=out_dim, kernel_initializer=initializer, kernel_regularizer=regularizer)
+                features, units=out_dim, use_bias=False, kernel_initializer=initializer, kernel_regularizer=regularizer)
         in_dim = out_dim
 
     bn = tf.layers.batch_normalization(
@@ -280,7 +280,7 @@ def inference(images, training=True):
     # tf.nn.sparse_softmax_cross_entropy_with_logits accepts the unscaled logits
     # and performs the softmax internally for efficiency.
     with tf.variable_scope('softmax_linear') as scope:
-        dtype = get_dtype()
+        dtype = _get_dtype()
         dim = dense.get_shape()[1].value
         kernel_initializer = tf.truncated_normal_initializer(stddev=float(1)/dim, dtype=dtype)
         bias_initializer = tf.zeros_initializer(dtype=dtype)
