@@ -304,7 +304,10 @@ def loss(logits, labels):
     cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=labels, logits=logits, name='cross_entropy_per_example')
     cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
-    tf.add_to_collection('losses', cross_entropy_mean)
+
+    tf.get_collection_ref('losses').extend(
+            tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+    tf.get_collection_ref('losses').append(cross_entropy_mean)
 
     # The total loss is defined as the cross entropy loss plus all of the weight
     # decay terms (L2 loss).
