@@ -144,6 +144,11 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
     return var
 
 
+def get_dtype():
+    dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
+    return dtype
+
+
 def distorted_inputs():
     """Construct distorted input for CIFAR training using the Reader ops.
 
@@ -275,13 +280,17 @@ def inference(images, training=True):
     # tf.nn.sparse_softmax_cross_entropy_with_logits accepts the unscaled logits
     # and performs the softmax internally for efficiency.
     with tf.variable_scope('softmax_linear') as scope:
+        dtype = get_dtype()
         dim = dense.get_shape()[1].value
-        weights = _variable_with_weight_decay('weights', [dim, NUM_CLASSES],
-                                              stddev=float(1) / dim, wd=FLAGS.wd)
-        biases = _variable_on_cpu('biases', [NUM_CLASSES],
-                                  tf.constant_initializer(0.0))
-        softmax_linear = tf.add(
-            tf.matmul(dense, weights), biases, name=scope.name)
+        kernel_initializer = tf.truncated_normal_initializer(stddev=float(1)/dim, dtype=dtype)
+        bias_initializer = tf.zeros_initializer(dtype=dtype)
+        regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
+        softmax_linear = tf.layers.dense(
+                dense, units=NUM_CLASSES, use_bias=True,
+                kernel_initializer=kernel_initializer,
+                bias_initializer=bias_initializer,
+                kernel_regularizer=regularizer,
+                bias_regularizer=regularizer)
         _activation_summary(softmax_linear)
 
     return softmax_linear
