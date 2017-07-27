@@ -156,12 +156,10 @@ def conv_bn(features, kernel_sizes, strides, out_channels, training, scope):
     initializer = tf.truncated_normal_initializer(stddev=5e-2, dtype=dtype)
     regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
 
-    in_channel = features.get_shape()[-1]
     for kernel_size, stride, out_channel in zip(kernel_sizes, strides, out_channels):
         features = tf.layers.conv2d(
                 features, filters=out_channel, kernel_size=kernel_size, strides=stride, padding='SAME',
                 use_bias=False, kernel_initializer=initializer, kernel_regularizer=regularizer)
-        in_channel = out_channel
 
     bn = tf.layers.batch_normalization(
         features, momentum=FLAGS.bn_momentum, training=training)
@@ -178,11 +176,9 @@ def dense_bn(features, out_dims, training, scope):
     initializer = tf.truncated_normal_initializer(stddev=5e-2, dtype=dtype)
     regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
 
-    in_dim = features.get_shape()[-1].value
     for out_dim in out_dims:
         features = tf.layers.dense(
                 features, units=out_dim, use_bias=False, kernel_initializer=initializer, kernel_regularizer=regularizer)
-        in_dim = out_dim
 
     bn = tf.layers.batch_normalization(
         features, momentum=FLAGS.bn_momentum, training=training)
