@@ -40,6 +40,8 @@ import re
 import sys
 import tarfile
 
+import numpy as np
+
 from six.moves import urllib
 import tensorflow as tf
 
@@ -58,6 +60,16 @@ tf.app.flags.DEFINE_float('bn_momentum', 0.99,
                           """Momentum for the moving average of batch normalization.""")
 tf.app.flags.DEFINE_float('wd', 0.004,
                           """L2Loss weight decay multiplied by this float.""")
+tf.app.flags.DEFINE_integer('depth', 40,
+                            """Depth of dense-net.""")
+tf.app.flags.DEFINE_integer('growth_rate', 12,
+                            """Growth rate of dense-net. This number of channels is added in each layer.""")
+tf.app.flags.DEFINE_float('dropout_rate', 0.2,
+                          """Drop out rate after convolution.""")
+tf.app.flags.DEFINE_string('lr_boundaries', "150,225",
+                           """Boundaries of learning rate.""")
+tf.app.flags.DEFINE_string('lr_values', "0.1,0.01,0.001",
+                           """Values of learning rate.""")
 
 # Global constants describing the CIFAR-10 data set.
 IMAGE_SIZE = cifar10_input.IMAGE_SIZE
@@ -149,6 +161,15 @@ def inputs(eval_data):
         labels = tf.cast(labels, tf.float16)
     return images, labels
 
+def conv2d(features, kernel_size, stride, out_channel):
+    dtype = _get_dtype()
+    initializer = tf.truncated_normal_initializer(stddev=5e-2, dtype=dtype)
+    regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
+    features = tf.layers.conv2d(
+            features, filters=out_channel, kernel_size=kernel_size, strides=stride, padding='SAME',
+            use_bias=False, kernel_initializer=initializer, kernel_regularizer=regularizer)
+    return features
+
 
 def conv_bn(features, kernel_sizes, strides, out_channels, training, scope):
 
@@ -188,6 +209,35 @@ def dense_bn(features, out_dims, training, scope):
     return dense
 
 
+def unit_layer(features, out_channel, training):
+    bn = tf.layers.batch_normalization(
+        features, momentum=FLAGS.bn_momentum, training=training)
+    activate = tf.nn.relu(bn)
+    conv = conv2d(activate, kernel_size=3, stride=1, out_channel=out_channel)
+    drop = tf.layers.dropout(conv, rate=FLAGS.dropout_rate, training=training)
+    return drop
+
+
+def block(features, depth, growth_rate, training):
+    for i in range(depth):
+        with tf.variable_scope("dense_layer{}".format(i)) as scope:
+            unit = unit_layer(features, out_channel=growth_rate, training=training)
+            features = tf.concat([features, unit], axis=3, name=scope.name)
+    return features
+
+
+def transition(features, training, scope):
+    num_channel = features.get_shape()[3].value
+    unit = unit_layer(features, out_channel=num_channel, training=training)
+    features = tf.layers.average_pooling2d(
+            unit, pool_size=2, strides=2, padding='valid', name=scope.name)
+    return features
+
+
+def global_average_pooling2d(features):
+    return tf.reduce_mean(features, axis=[1, 2])
+
+
 def inference(images, training=True):
     """Build the CIFAR-10 model.
 
@@ -197,47 +247,39 @@ def inference(images, training=True):
     Returns:
       Logits.
     """
-    # We instantiate all variables using tf.get_variable() instead of
-    # tf.Variable() in order to share variables across multiple GPU training runs.
-    # If we only ran this model on a single GPU, we could simplify this function
-    # by replacing all instances of tf.get_variable() with tf.Variable().
-    #
-    # conv1
-    with tf.variable_scope('conv1') as scope:
-        conv1 = conv_bn(images, [3, 3], [1, 1], [64, 64], training, scope)
 
-    # pool1
-    pool1 = tf.nn.max_pool(conv1, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1],
-                           padding='SAME', name='pool1')
+    with tf.variable_scope('conv0') as scope:
+        conv0 = conv2d(images, kernel_size=3, stride=1, out_channel=16)
 
-    # conv2
-    with tf.variable_scope('conv2') as scope:
-        conv2 = conv_bn(pool1, [3, 3], [1, 1], [64, 64], training, scope)
+    with tf.variable_scope('dense1') as scope:
+        first_depth = int((FLAGS.depth - 4) / 3)
+        block1 = block(conv0, first_depth, FLAGS.growth_rate, training)
+        dense1 = transition(block1, training, scope=scope)
 
-    # pool2
-    pool2 = tf.nn.max_pool(conv2, ksize=[1, 3, 3, 1],
-                           strides=[1, 2, 2, 1], padding='SAME', name='pool2')
+    with tf.variable_scope('dense2') as scope:
+        second_depth = int((FLAGS.depth - 4) / 3)
+        block2 = block(dense1, second_depth, FLAGS.growth_rate, training)
+        dense2 = transition(block2, training, scope=scope)
 
-    # conv3
-    with tf.variable_scope('conv3') as scope:
-        conv3 = conv_bn(pool2, [1, 1], [1, 1], [64, 128], training, scope)
+    with tf.variable_scope('dense3') as scope:
+        third_depth = FLAGS.depth - (4 + first_depth + second_depth)
+        block3 = block(dense2, third_depth, FLAGS.growth_rate, training)
+        dense3 = transition(block3, training, scope=scope)
 
-    # local4
-    with tf.variable_scope('local4') as scope:
-        dense = dense_bn(conv3, [192], training, scope)
+    with tf.variable_scope('last') as scope:
+        bn = tf.layers.batch_normalization(
+            dense3, momentum=FLAGS.bn_momentum, training=training)
+        activate = tf.nn.relu(bn)
+        last = global_average_pooling2d(activate)
 
-    # linear layer(WX + b),
-    # We don't apply softmax here because
-    # tf.nn.sparse_softmax_cross_entropy_with_logits accepts the unscaled logits
-    # and performs the softmax internally for efficiency.
     with tf.variable_scope('softmax_linear') as scope:
         dtype = _get_dtype()
-        dim = dense.get_shape()[1].value
+        dim = np.prod(last.get_shape().as_list()[1:])
         kernel_initializer = tf.truncated_normal_initializer(stddev=float(1)/dim, dtype=dtype)
         bias_initializer = tf.zeros_initializer(dtype=dtype)
         regularizer = tf.contrib.layers.l2_regularizer(FLAGS.wd)
         softmax_linear = tf.layers.dense(
-                dense, units=NUM_CLASSES, use_bias=True,
+                last, units=NUM_CLASSES, use_bias=True,
                 kernel_initializer=kernel_initializer,
                 bias_initializer=bias_initializer,
                 kernel_regularizer=regularizer,
@@ -318,12 +360,13 @@ def train(total_loss, global_step):
     num_batches_per_epoch = NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN / FLAGS.batch_size
     decay_steps = int(num_batches_per_epoch * NUM_EPOCHS_PER_DECAY)
 
-    # Decay the learning rate exponentially based on the number of steps.
-    lr = tf.train.exponential_decay(INITIAL_LEARNING_RATE,
-                                    global_step,
-                                    decay_steps,
-                                    LEARNING_RATE_DECAY_FACTOR,
-                                    staircase=True)
+    # Decay the learning rate based on the number of epochs.
+    num_epoch = global_step * FLAGS.batch_size / NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN
+    lr_boundaries = [np.array(b, dtype=np.float64) for b in FLAGS.lr_boundaries.split(',')]
+    lr_values = [float(v) for v in FLAGS.lr_values.split(',')]
+    assert len(lr_boundaries)+1 == len(lr_values), "len(lr_boundaries)+1 must be equal to len(lr_values)"
+
+    lr = tf.train.piecewise_constant(num_epoch, boundaries=lr_boundaries, values=lr_values)
     tf.summary.scalar('learning_rate', lr)
 
     # Generate moving averages of all losses and associated summaries.
