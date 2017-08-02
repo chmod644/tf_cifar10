@@ -66,6 +66,10 @@ tf.app.flags.DEFINE_integer('growth_rate', 12,
                             """Growth rate of dense-net. This number of channels is added in each layer.""")
 tf.app.flags.DEFINE_float('dropout_rate', 0.2,
                           """Drop out rate after convolution.""")
+tf.app.flags.DEFINE_string('lr_boundaries', "150,225",
+                           """Boundaries of learning rate.""")
+tf.app.flags.DEFINE_string('lr_values', "0.1,0.01,0.001",
+                           """Values of learning rate.""")
 
 # Global constants describing the CIFAR-10 data set.
 IMAGE_SIZE = cifar10_input.IMAGE_SIZE
@@ -356,12 +360,13 @@ def train(total_loss, global_step):
     num_batches_per_epoch = NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN / FLAGS.batch_size
     decay_steps = int(num_batches_per_epoch * NUM_EPOCHS_PER_DECAY)
 
-    # Decay the learning rate exponentially based on the number of steps.
-    lr = tf.train.exponential_decay(INITIAL_LEARNING_RATE,
-                                    global_step,
-                                    decay_steps,
-                                    LEARNING_RATE_DECAY_FACTOR,
-                                    staircase=True)
+    # Decay the learning rate based on the number of epochs.
+    num_epoch = global_step * FLAGS.batch_size / NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN
+    lr_boundaries = [np.array(b, dtype=np.float64) for b in FLAGS.lr_boundaries.split(',')]
+    lr_values = [float(v) for v in FLAGS.lr_values.split(',')]
+    assert len(lr_boundaries)+1 == len(lr_values), "len(lr_boundaries)+1 must be equal to len(lr_values)"
+
+    lr = tf.train.piecewise_constant(num_epoch, boundaries=lr_boundaries, values=lr_values)
     tf.summary.scalar('learning_rate', lr)
 
     # Generate moving averages of all losses and associated summaries.
